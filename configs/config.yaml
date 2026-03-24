@@ -1,0 +1,81 @@
+# Cotton Chronos-2 Forecasting Configuration — v3 (Multivariate + Covariates)
+
+model:
+  model_id: "amazon/chronos-2"        # Chronos-2: encoder-only, supports covariates + cross-learning
+  device_map: "cpu"                   # "cpu" or "cuda"
+
+forecast:
+  horizons: [30, 60, 90]              # Trading days ahead
+  quantile_levels: [0.1, 0.25, 0.5, 0.75, 0.9]
+
+data:
+  target: "ct1_close"
+  id_column: "id"
+  timestamp_column: "timestamp"
+  start_date: "2018-01-01"
+
+  past_covariates:                    # Columns with historical values only (no future)
+    - dxy                             # US Dollar Index
+    - wti_crude                       # WTI Crude Oil
+    - traders_noncomm_long            # CFTC non-commercial long positions (r=0.71)
+    - spec_net_pct                    # Speculator net as % of OI (r=0.67)
+    - conc_4_short                    # Top-4 trader short concentration (r=0.63)
+    - pdsi_severe_drought             # Binary severe drought flag (r=0.42)
+    - realised_vol_21d                # 21-day realized volatility
+    - noaa_pdsi                       # NOAA Palmer Drought Severity Index
+    - ct1_ret_5d                      # 5-day price momentum
+    - ct1_ret_21d                     # 21-day price momentum
+    - dxy_5d_ret                      # DXY 5-day return (cross-asset momentum)
+    - wti_5d_ret                      # WTI 5-day return (cross-asset momentum)
+    - noncomm_long_chg_5d             # CFTC non-comm positioning change
+    - spec_net_pct_chg_5d             # Speculator positioning change
+    - cert_stocks_z                   # ICE certified stocks z-score (supply pressure)
+    - cert_stocks_chg_5d              # 5-day change in warehouse inventory
+    - cert_stocks_chg_21d             # 21-day change in warehouse inventory (trend)
+
+  known_future_covariates:            # Deterministic — can be computed for future dates
+    - seas_sin_annual                 # Fourier annual sine
+    - seas_cos_annual                 # Fourier annual cosine
+    - flag_planting                   # Crop calendar: planting season (Apr–Jun)
+    - flag_boll_dev                   # Crop calendar: boll development (Jul–Aug)
+    - flag_harvest                    # Crop calendar: harvest (Sep–Nov)
+    - flag_wasde                      # USDA WASDE release window (~9th–13th of month)
+
+  cross_learning_series:              # Additional series for cross-learning via group attention
+    - dxy
+    - wti_crude
+
+backtest:
+  test_days: 500                      # Last ~2 years held out
+  step_size: 10                       # Walk-forward step (trading days) — denser for better stats
+  min_context_length: 500             # Skip origins with fewer context days (cold-start guard)
+  warmup_origins: 1                   # Skip first N origins (regime-shift warm-up)
+
+ensemble:
+  enabled: true                       # Combine Chronos-2 + Chronos-Bolt
+  weight_chronos2: 0.6                # Weight for Chronos-2 multivariate
+  weight_bolt: 0.4                    # Weight for Chronos-Bolt univariate
+
+bias_correction:
+  enabled: true                       # Apply post-hoc bias correction to live forecasts
+  source: "backtest"                  # Use backtest signed errors as bias estimate
+
+baselines:
+  prophet:
+    growth: "flat"
+    yearly_seasonality: false
+    weekly_seasonality: true
+    interval_width: 0.80
+    changepoint_prior_scale: 0.05
+    regressors:
+      - dxy_dev
+      - roll_yield
+      - crude_5d_ret
+
+serving:
+  host: "0.0.0.0"
+  port: 8000
+
+monitoring:
+  crps_drift_threshold: 0.20
+  coverage_bounds: [0.65, 0.95]
