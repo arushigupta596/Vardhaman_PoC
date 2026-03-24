@@ -18,6 +18,18 @@ RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 FEAT_DIR = Path(__file__).resolve().parent.parent / "data" / "features"
 FEAT_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _smooth_seasonal_flag(doy_series, start_doy, end_doy, ramp_days=15):
+    """Smooth seasonal flag using sigmoid transitions at boundaries.
+
+    Instead of hard 0→1 switches, ramps up/down over ~ramp_days using a sigmoid.
+    This avoids z-score spikes when the flag is normalized.
+    """
+    k = 4.0 / ramp_days  # steepness: 4/ramp gives ~95% transition within ramp_days
+    rise = 1.0 / (1.0 + np.exp(-k * (doy_series - start_doy)))
+    fall = 1.0 / (1.0 + np.exp(-k * (end_doy - doy_series)))
+    return rise * fall
+
 # Covariate metadata: classifies each feature for Chronos-2 multivariate input
 COVARIATE_META = {
     # Past-only covariates (historical values only, no future projection)
@@ -221,11 +233,11 @@ def build_features() -> pd.DataFrame:
     df["seas_sin_semi"] = np.sin(4 * np.pi * doy / 365.25)
     df["seas_cos_semi"] = np.cos(4 * np.pi * doy / 365.25)
 
-    # Crop calendar flags
-    month = df.index.month
-    df["flag_planting"] = ((month >= 4) & (month <= 6)).astype(float)
-    df["flag_boll_dev"] = ((month >= 7) & (month <= 8)).astype(float)
-    df["flag_harvest"] = ((month >= 9) & (month <= 11)).astype(float)
+    # Crop calendar flags — smooth sigmoid transitions to avoid z-score spikes
+    doy = df.index.dayofyear
+    df["flag_planting"] = _smooth_seasonal_flag(doy, 91, 181)   # Apr 1 – Jun 30
+    df["flag_boll_dev"] = _smooth_seasonal_flag(doy, 182, 243)  # Jul 1 – Aug 31
+    df["flag_harvest"] = _smooth_seasonal_flag(doy, 244, 334)   # Sep 1 – Nov 30
 
     # WASDE release approximation (around 10th–12th of each month)
     dom = df.index.day

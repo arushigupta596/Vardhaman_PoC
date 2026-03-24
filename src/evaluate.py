@@ -124,9 +124,14 @@ def walk_forward_backtest(
         print(f"  → Warm-up skip: {warmup_origins} origins skipped")
     print(f"  → Test period: {features_df.index[origins[0]].date() if origins else 'N/A'} – {features_df.index[-1].date()}")
 
+    from src.model import detect_regime
+
     records = []
     for i, origin_idx in enumerate(origins):
         origin_date = features_df.index[origin_idx]
+
+        # Detect market regime at this origin
+        regime = detect_regime(series.iloc[:origin_idx])
 
         for h in horizons:
             if origin_idx + h >= n:
@@ -140,6 +145,12 @@ def walk_forward_backtest(
                 if metrics:
                     metrics["as_of"] = origin_date
                     metrics["horizon"] = h
+                    metrics["regime"] = regime
+                    # Store individual model predictions if available
+                    if "c2_median" in forecast_dict:
+                        metrics["c2_median"] = forecast_dict["c2_median"][h - 1]
+                    if "bolt_median" in forecast_dict:
+                        metrics["bolt_median"] = forecast_dict["bolt_median"][h - 1]
                     records.append(metrics)
             except Exception as e:
                 print(f"  → Error at {origin_date.date()} h={h}: {e}")
@@ -185,15 +196,40 @@ def walk_forward_backtest(
     if outlier_origins:
         print(f"\n  ⚠ Outlier origins (MAE > 3× median): {', '.join(sorted(outlier_origins))}")
 
-    # Summary with bias reporting
+    # Summary with bias reporting (static + EWMA + regime)
+    from src.model import compute_ewma_bias, compute_regime_ewma_bias, optimize_ensemble_weights
+    ewma_bias = compute_ewma_bias(alpha=0.3)
+    regime_bias = compute_regime_ewma_bias(alpha=0.3)
+
     for h in horizons:
         sub = results_df[results_df["horizon"] == h]
         if len(sub) > 0:
-            bias = sub["signed_error"].mean()
+            static_bias = sub["signed_error"].mean()
+            ewma_b = ewma_bias.get(h, float("nan"))
             print(f"\n  {h}d: MAE={sub['mae'].mean():.2f}  CRPS={sub['crps'].mean():.3f}  "
                   f"Dir={sub['dir_acc'].mean():.1%}  Cov={sub['coverage'].mean():.1%}  "
                   f"RMSE={sub['rmse'].mean():.2f}  MASE={sub['mase'].mean():.2f}  "
-                  f"Bias={bias:+.2f}")
+                  f"StaticBias={static_bias:+.2f}  EWMABias={ewma_b:+.2f}")
+
+    # Regime bias breakdown
+    if "regime" in results_df.columns and regime_bias:
+        print("\n  Regime-dependent EWMA bias:")
+        for h in horizons:
+            if h in regime_bias:
+                parts = [f"{r}={regime_bias[h].get(r, 0):+.2f}" for r in ["up", "down", "sideways"]]
+                print(f"    {h}d: {', '.join(parts)}")
+        # Regime distribution
+        if "regime" in results_df.columns:
+            regime_counts = results_df.groupby("regime").size()
+            print(f"    Distribution: {dict(regime_counts)}")
+
+    # Ensemble weight optimization
+    opt_weights = optimize_ensemble_weights(horizons)
+    if opt_weights:
+        print("\n  Optimized ensemble weights (per horizon):")
+        for h, info in sorted(opt_weights.items()):
+            print(f"    {h}d: C2={info['weight_chronos2']:.0%} Bolt={info['weight_bolt']:.0%}  "
+                  f"MAE {info['default_mae']:.2f}→{info['optimized_mae']:.2f} ({info['improvement_pct']:+.1f}%)")
 
     return results_df
 

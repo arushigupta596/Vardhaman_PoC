@@ -9,9 +9,11 @@ venv/
 # Node
 node_modules/
 
-# Data (large files)
+# Data (large raw files)
 data/raw/*.parquet
-data/features/*.parquet
+
+# Temp files
+results/~$*
 
 # Environment
 .env

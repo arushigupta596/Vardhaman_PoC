@@ -58,7 +58,8 @@ ensemble:
 
 bias_correction:
   enabled: true                       # Apply post-hoc bias correction to live forecasts
-  source: "backtest"                  # Use backtest signed errors as bias estimate
+  method: "regime_ewma"               # "regime_ewma" (regime-aware), "ewma" (adaptive), or "static" (simple mean)
+  alpha: 0.3                          # EWMA smoothing factor (0-1); higher = more reactive to recent errors
 
 baselines:
   prophet:

@@ -11,6 +11,7 @@ import yaml
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from src.features import _smooth_seasonal_flag
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "configs" / "config.yaml"
 
@@ -261,11 +262,11 @@ def build_future_df(
         elif col == "seas_cos_annual":
             future_values[col] = np.cos(2 * np.pi * doy / 365.25)
         elif col == "flag_planting":
-            future_values[col] = ((month >= 4) & (month <= 6)).astype(float)
+            future_values[col] = _smooth_seasonal_flag(doy, 91, 181)
         elif col == "flag_boll_dev":
-            future_values[col] = ((month >= 7) & (month <= 8)).astype(float)
+            future_values[col] = _smooth_seasonal_flag(doy, 182, 243)
         elif col == "flag_harvest":
-            future_values[col] = ((month >= 9) & (month <= 11)).astype(float)
+            future_values[col] = _smooth_seasonal_flag(doy, 244, 334)
         elif col == "flag_wasde":
             future_values[col] = ((dom >= 9) & (dom <= 13)).astype(float)
 

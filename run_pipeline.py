@@ -82,6 +82,7 @@ def main():
                     config=config,
                     weight_chronos2=w_c2,
                     weight_bolt=w_bolt,
+                    return_components=True,
                 )
         else:
             def multivariate_model_fn(df, origin_idx, h):
@@ -138,7 +139,9 @@ def main():
     import pandas as pd
 
     features = pd.read_parquet("data/features/features.parquet")
-    from src.model import forecast, load_bias_estimates, apply_bias_correction, forecast_bolt_univariate
+    from src.model import (forecast, load_bias_estimates, apply_bias_correction,
+                            forecast_bolt_univariate, detect_regime,
+                            optimize_ensemble_weights)
 
     max_horizon = max(config["forecast"]["horizons"])
     use_ensemble = config.get("ensemble", {}).get("enabled", False) and not args.univariate
@@ -150,26 +153,49 @@ def main():
         cross_learning=not args.univariate,
     )
 
-    # Ensemble with Chronos-Bolt if enabled
+    # Ensemble with Chronos-Bolt — use optimized per-horizon weights if available
     if use_ensemble:
-        w_c2 = config["ensemble"].get("weight_chronos2", 0.6)
-        w_bolt = config["ensemble"].get("weight_bolt", 0.4)
+        opt_weights = optimize_ensemble_weights(config["forecast"]["horizons"])
         bolt_result = forecast_bolt_univariate(
             features[config["data"]["target"]], max_horizon, config["forecast"]["quantile_levels"]
         )
-        for key in ["q10", "q25", "median", "q75", "q90", "mean"]:
-            if key in result and key in bolt_result:
-                result[key] = w_c2 * result[key] + w_bolt * bolt_result[key]
-        print(f"  → Ensemble applied: Chronos-2 ({w_c2}) + Chronos-Bolt ({w_bolt})")
 
-    # Apply bias correction if enabled
+        if opt_weights:
+            # Apply optimized per-horizon weights to the full forecast arrays
+            # Use the max-horizon optimized weight as default for the full array
+            max_h = max(config["forecast"]["horizons"])
+            w_c2 = opt_weights.get(max_h, {}).get("weight_chronos2", config["ensemble"].get("weight_chronos2", 0.6))
+            w_bolt = 1 - w_c2
+            for key in ["q10", "q25", "median", "q75", "q90", "mean"]:
+                if key in result and key in bolt_result:
+                    result[key] = w_c2 * result[key] + w_bolt * bolt_result[key]
+            weight_info = ", ".join(f"{h}d: C2={info['weight_chronos2']:.0%}/Bolt={info['weight_bolt']:.0%}"
+                                    for h, info in sorted(opt_weights.items()))
+            print(f"  → Ensemble (optimized weights): {weight_info}")
+        else:
+            w_c2 = config["ensemble"].get("weight_chronos2", 0.6)
+            w_bolt = config["ensemble"].get("weight_bolt", 0.4)
+            for key in ["q10", "q25", "median", "q75", "q90", "mean"]:
+                if key in result and key in bolt_result:
+                    result[key] = w_c2 * result[key] + w_bolt * bolt_result[key]
+            print(f"  → Ensemble applied: Chronos-2 ({w_c2}) + Chronos-Bolt ({w_bolt})")
+
+    # Apply regime-dependent bias correction if enabled
     bias_cfg = config.get("bias_correction", {})
     if bias_cfg.get("enabled", False):
-        bias_estimates = load_bias_estimates()
+        method = bias_cfg.get("method", "regime_ewma")
+        alpha = bias_cfg.get("alpha", 0.3)
+
+        # Detect current market regime
+        current_regime = detect_regime(features[config["data"]["target"]])
+        print(f"  → Current market regime: {current_regime}")
+
+        bias_estimates = load_bias_estimates(method=method, alpha=alpha, regime=current_regime)
         if bias_estimates:
             for h in config["forecast"]["horizons"]:
                 result = apply_bias_correction(result, h, bias_estimates)
-            print(f"  → Bias correction applied: {bias_estimates}")
+            print(f"  → Bias correction ({method}, α={alpha}, regime={current_regime}): "
+                  f"{{{', '.join(f'{k}d: {v:+.2f}' for k, v in sorted(bias_estimates.items()))}}}")
         else:
             print(f"  → Bias correction enabled but no estimates available (run backtest first)")
 
