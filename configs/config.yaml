@@ -10,6 +10,10 @@ forecast:
 
 data:
   target: "ct1_close"
+  secondary_targets:                   # Additional futures features to forecast
+    - realised_vol_21d                 # 21-day realized volatility (risk management)
+    - open_interest                    # Open interest proxy (market liquidity)
+    - roll_yield                       # CT2-CT1 term spread (contango/backwardation)
   id_column: "id"
   timestamp_column: "timestamp"
   start_date: "2018-01-01"

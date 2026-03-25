@@ -95,10 +95,10 @@ def main():
     st.divider()
 
     # ── TAB LAYOUT ──
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "Live Forecast", "Backtest Results", "Bias & Regime Analysis",
-        "CFTC COT Analysis", "Weather & Drought", "Signal Dashboard",
-        "Covariate Impact"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "Live Forecast", "Futures Features Forecast", "Backtest Results",
+        "Bias & Regime Analysis", "CFTC COT Analysis", "Weather & Drought",
+        "Signal Dashboard", "Covariate Impact"
     ])
 
     # ═══════════════════════════════════════════════════════════
@@ -194,9 +194,109 @@ def main():
                     st.rerun()
 
     # ═══════════════════════════════════════════════════════════
-    # TAB 2: BACKTEST RESULTS
+    # TAB 2: FUTURES FEATURES FORECAST
     # ═══════════════════════════════════════════════════════════
     with tab2:
+        st.header("NY Cotton Futures Feature Forecasts")
+        st.markdown(
+            "Forecasting key market features alongside price using Chronos-2 multi-target prediction. "
+            "All features are predicted in a **single model call** via cross-learning."
+        )
+
+        FEATURE_CONFIG = {
+            "realised_vol_21d": {
+                "label": "Realized Volatility (21-day, annualized)",
+                "unit": "",
+                "description": "Expected price volatility — higher values indicate more market uncertainty and risk.",
+                "color": "#E74C3C",
+            },
+            "open_interest": {
+                "label": "Open Interest (5-day avg proxy)",
+                "unit": "contracts",
+                "description": "Market participation and liquidity indicator. Rising OI with rising price = bullish conviction.",
+                "color": "#2E86C1",
+            },
+            "roll_yield": {
+                "label": "Term Spread (CT2-CT1 / CT1)",
+                "unit": "%",
+                "description": "Positive = contango (deferred > front). Negative = backwardation. Signals carry costs and delivery pressure.",
+                "color": "#27AE60",
+            },
+        }
+
+        # Load secondary forecasts
+        sec_forecasts = {}
+        for tgt in FEATURE_CONFIG:
+            sec_path = RESULTS_DIR / f"live_forecast_{tgt}.csv"
+            if sec_path.exists():
+                sec_forecasts[tgt] = pd.read_csv(sec_path, parse_dates=["date"])
+
+        if sec_forecasts:
+            # Summary metrics
+            st.subheader("30 / 60 / 90 Day Feature Forecasts")
+            for tgt, cfg in FEATURE_CONFIG.items():
+                if tgt not in sec_forecasts:
+                    continue
+                sdf = sec_forecasts[tgt]
+                current_val = features[tgt].iloc[-1] if tgt in features.columns else 0
+
+                st.markdown(f"### {cfg['label']}")
+                st.caption(cfg["description"])
+
+                mcols = st.columns(3)
+                for i, h in enumerate([30, 60, 90]):
+                    if h <= len(sdf):
+                        row = sdf.iloc[h - 1]
+                        val = row["median"]
+                        direction = "↑" if val > current_val else "↓"
+                        if tgt == "roll_yield":
+                            mcols[i].metric(
+                                f"{h}-Day", f"{val:.4f} {direction}",
+                                f"[{row['q10']:.4f}, {row['q90']:.4f}]"
+                            )
+                        else:
+                            mcols[i].metric(
+                                f"{h}-Day", f"{val:.2f} {direction}",
+                                f"[{row['q10']:.2f}, {row['q90']:.2f}]"
+                            )
+
+                # Chart: historical + forecast
+                fig = go.Figure()
+                if tgt in features.columns:
+                    hist = features[tgt].tail(120)
+                    fig.add_trace(go.Scatter(
+                        x=hist.index, y=hist.values,
+                        name="Historical", line=dict(color=NAVY, width=2)
+                    ))
+                fig.add_trace(go.Scatter(
+                    x=sdf["date"], y=sdf["median"],
+                    name="Forecast", line=dict(color=cfg["color"], width=2, dash="dash")
+                ))
+                fig.add_trace(go.Scatter(
+                    x=pd.concat([sdf["date"], sdf["date"][::-1]]),
+                    y=pd.concat([sdf["q90"], sdf["q10"][::-1]]),
+                    fill="toself", fillcolor=f"rgba(150,150,150,0.15)",
+                    line=dict(width=0), name="80% Interval"
+                ))
+                fig.update_layout(
+                    title=cfg["label"], yaxis_title=cfg["unit"],
+                    height=350, template="plotly_white"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                st.divider()
+        else:
+            st.info("Secondary feature forecasts not yet available. Run: `python run_pipeline.py`")
+            st.markdown("""
+            **Features to be predicted:**
+            - **Realized Volatility** — 21-day annualized vol for risk management
+            - **Open Interest** — market participation and liquidity
+            - **Term Spread (Roll Yield)** — contango/backwardation indicator
+            """)
+
+    # ═══════════════════════════════════════════════════════════
+    # TAB 3: BACKTEST RESULTS
+    # ═══════════════════════════════════════════════════════════
+    with tab3:
         st.header("Walk-Forward Backtest Comparison")
 
         if chronos_bt is None or prophet_bt is None:
@@ -298,7 +398,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # TAB 3: BIAS & REGIME ANALYSIS (NEW)
     # ═══════════════════════════════════════════════════════════
-    with tab3:
+    with tab4:
         st.header("Bias & Regime Analysis")
         st.markdown("Analysis of systematic forecast bias and market regime-dependent corrections.")
 
@@ -489,7 +589,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # TAB 4: CFTC COT ANALYSIS
     # ═══════════════════════════════════════════════════════════
-    with tab4:
+    with tab5:
         st.header("CFTC Commitments of Traders — Cotton")
 
         cot_cols = [c for c in features.columns if any(x in c for x in ["comm_", "spec_", "mm_", "cot_"])]
@@ -545,7 +645,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # TAB 5: WEATHER & DROUGHT
     # ═══════════════════════════════════════════════════════════
-    with tab5:
+    with tab6:
         st.header("Weather & Drought — Lubbock TX (Cotton Belt)")
 
         fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
@@ -608,7 +708,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # TAB 6: SIGNAL DASHBOARD
     # ═══════════════════════════════════════════════════════════
-    with tab6:
+    with tab7:
         st.header("Multi-Signal Dashboard")
 
         fig = make_subplots(rows=5, cols=1, shared_xaxes=True,
@@ -647,7 +747,7 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # TAB 7: COVARIATE IMPACT
     # ═══════════════════════════════════════════════════════════
-    with tab7:
+    with tab8:
         st.header("Covariate Impact Analysis")
         st.markdown("Covariates used by Chronos-2 for multivariate forecasting.")
 

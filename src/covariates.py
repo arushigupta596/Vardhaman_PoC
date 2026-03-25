@@ -209,6 +209,21 @@ def build_context_df_cross_learning(
             target_data[col] = context[col].values
     frames.append(pd.DataFrame(target_data))
 
+    # Secondary targets — each as a separate forecasting target with shared covariates
+    secondary_targets = config["data"].get("secondary_targets", [])
+    for sec_col in secondary_targets:
+        if sec_col in context.columns and sec_col != target_col:
+            sec_data = {
+                id_col: sec_col,
+                ts_col: context.index,
+                "target": context[sec_col].values,
+            }
+            # Secondary targets get shared future covariates (like cross-learning)
+            for col in future_covs:
+                if col in context.columns:
+                    sec_data[col] = context[col].values
+            frames.append(pd.DataFrame(sec_data))
+
     # Cross-learning series — each as a separate item
     for series_col in cross_series:
         if series_col in context.columns and series_col != target_col:
@@ -281,6 +296,13 @@ def build_future_df(
     frames = []
     target_future = {id_col: target_col, ts_col: future_dates, **future_values}
     frames.append(pd.DataFrame(target_future))
+
+    # Build future_df for secondary targets
+    secondary_targets = config["data"].get("secondary_targets", [])
+    for sec_col in secondary_targets:
+        if sec_col != target_col:
+            sec_future = {id_col: sec_col, ts_col: future_dates, **future_values}
+            frames.append(pd.DataFrame(sec_future))
 
     # Build future_df for cross-learning series
     for series_col in cross_series:

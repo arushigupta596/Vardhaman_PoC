@@ -218,6 +218,30 @@ def main():
         direction = "↑" if row["median"] > features["ct1_close"].iloc[-1] else "↓"
         print(f"  → {h}d: {row['median']:.2f} ¢/lb {direction}  [{row['q10']:.2f}, {row['q90']:.2f}]")
 
+    # Save and display secondary target forecasts
+    secondary_preds = result.get("secondary", {})
+    if secondary_preds:
+        from src.model import SECONDARY_TARGET_LABELS
+        print(f"\n  Secondary Futures Feature Forecasts:")
+        for tgt, preds in secondary_preds.items():
+            label = SECONDARY_TARGET_LABELS.get(tgt, tgt)
+            sec_df = pd.DataFrame({
+                "date": dates,
+                "median": preds["median"],
+                "q10": preds["q10"],
+                "q90": preds["q90"],
+            })
+            sec_df.to_csv(f"results/live_forecast_{tgt}.csv", index=False)
+
+            for h in config["forecast"]["horizons"]:
+                val = preds["median"][h - 1]
+                low = preds["q10"][h - 1]
+                high = preds["q90"][h - 1]
+                # Get current value for comparison
+                current = features[tgt].iloc[-1] if tgt in features.columns else 0
+                direction = "↑" if val > current else "↓"
+                print(f"    {tgt} {h}d: {val:.4f} {direction}  [{low:.4f}, {high:.4f}]")
+
     # Print covariate summary
     print("\n  Active Covariates:")
     past_covs = config["data"]["past_covariates"]

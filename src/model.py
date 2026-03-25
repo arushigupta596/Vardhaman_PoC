@@ -32,6 +32,35 @@ def _ensure_covariates():
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 QUANTILES = [0.1, 0.25, 0.5, 0.75, 0.9]
 
+# Human-readable labels for secondary targets
+SECONDARY_TARGET_LABELS = {
+    "realised_vol_21d": "Realized Volatility (21d annualized)",
+    "open_interest": "Open Interest (5d avg proxy)",
+    "roll_yield": "Term Spread CT2-CT1 (% of CT1)",
+}
+
+
+def _extract_secondary_predictions(pred_df, secondary_targets, id_col, ts_col, quantile_levels):
+    """
+    Extract predictions for secondary targets from the Chronos-2 predict_df output.
+
+    Returns:
+        {target_name: {"median": array, "q10": array, "q90": array}}
+    """
+    results = {}
+    for tgt in secondary_targets:
+        tgt_preds = pred_df[pred_df[id_col] == tgt].sort_values(ts_col)
+        if len(tgt_preds) == 0:
+            continue
+        results[tgt] = {
+            "q10": tgt_preds[str(quantile_levels[0])].values,
+            "q25": tgt_preds[str(quantile_levels[1])].values,
+            "median": tgt_preds[str(quantile_levels[2])].values,
+            "q75": tgt_preds[str(quantile_levels[3])].values,
+            "q90": tgt_preds[str(quantile_levels[4])].values,
+        }
+    return results
+
 _pipeline = None
 _bolt_pipeline = None
 _config = None
@@ -229,6 +258,14 @@ def forecast(
         "mean": ct1_preds[str(quantile_levels[2])].values,  # median as point estimate
         "dates": ct1_preds[ts_col].values,
     }
+
+    # Extract secondary target predictions
+    secondary_targets = config["data"].get("secondary_targets", [])
+    if secondary_targets:
+        result["secondary"] = _extract_secondary_predictions(
+            pred_df, secondary_targets, id_col, ts_col, quantile_levels
+        )
+
     return result
 
 
@@ -280,7 +317,7 @@ def forecast_at_origin(
     target_col = config["data"]["target"]
     ct1_preds = pred_df[pred_df[id_col] == target_col].sort_values(ts_col)
 
-    return {
+    result = {
         "q10": ct1_preds[str(quantile_levels[0])].values,
         "q25": ct1_preds[str(quantile_levels[1])].values,
         "median": ct1_preds[str(quantile_levels[2])].values,
@@ -288,6 +325,15 @@ def forecast_at_origin(
         "q90": ct1_preds[str(quantile_levels[4])].values,
         "mean": ct1_preds[str(quantile_levels[2])].values,
     }
+
+    # Extract secondary target predictions
+    secondary_targets = config["data"].get("secondary_targets", [])
+    if secondary_targets:
+        result["secondary"] = _extract_secondary_predictions(
+            pred_df, secondary_targets, id_col, ts_col, quantile_levels
+        )
+
+    return result
 
 
 def forecast_multi_horizon(
